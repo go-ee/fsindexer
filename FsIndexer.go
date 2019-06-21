@@ -127,6 +127,22 @@ func (o *FsIndexer) Index(done func(label string), nop bool) (err error) {
 
 func (o *FsIndexer) indexFile(path string, info os.FileInfo) (err error) {
 	var res *docconv.Response
+
+	h := md5.New()
+	io.WriteString(h, path)
+	id := fmt.Sprintf("%x", h.Sum(nil))
+
+	var existChunk bool
+	if o.ChunkSize > 1 {
+		existChunk, err = o.existsChunk(id, 1)
+	} else {
+		existChunk, err = o.existsChunk(id, 0)
+	}
+	if err != nil || existChunk {
+		log.Infof("%v exists already, skip\n", info.Name())
+		return
+	}
+
 	if res, err = docconv.ConvertPath(path); err == nil {
 		log.Infof("file content size %v\n", len(res.Body))
 
@@ -138,10 +154,6 @@ func (o *FsIndexer) indexFile(path string, info os.FileInfo) (err error) {
 		content = o.spaces.ReplaceAllString(content, " ")
 		content = o.dotsSpaces.ReplaceAllString(content, ". ")
 		content = o.dots.ReplaceAllString(content, ".")
-
-		h := md5.New()
-		io.WriteString(h, path)
-		id := fmt.Sprintf("%x", h.Sum(nil))
 
 		if o.ChunkSize > 1 {
 			chunks := chunkStringSpace(content, o.ChunkSize)
@@ -159,12 +171,11 @@ func (o *FsIndexer) indexFile(path string, info os.FileInfo) (err error) {
 
 func (o *FsIndexer) indexChunk(id string, chunkNum int, content string,
 	meta map[string]string, path string, info os.FileInfo) (err error) {
-	log.Infof("index %v, %v chunk, content size %v\n", info.Name(), chunkNum, len(content))
+	log.Infof("%v, %v chunk, size %v\n", info.Name(), chunkNum, len(content))
 	o.wg.Add(1)
 	defer o.wg.Done()
 
 	// Build the request body.
-	var chunkID string
 	doc := Doc{
 		Content: content,
 		Num:     chunkNum,
@@ -177,11 +188,7 @@ func (o *FsIndexer) indexChunk(id string, chunkNum int, content string,
 		return
 	}
 
-	if chunkNum > 0 {
-		chunkID = fmt.Sprintf("%v_%v", id, chunkNum)
-	} else {
-		chunkID = id
-	}
+	chunkID := buildChunkID(id, chunkNum)
 
 	req := esapi.IndexRequest{
 		Index:      o.ElasticsearchIndex,
@@ -199,6 +206,43 @@ func (o *FsIndexer) indexChunk(id string, chunkNum int, content string,
 
 	if res.IsError() {
 		log.Warnf("[%s] error indexing document ID=%v", res.Status(), chunkID)
+	}
+	return
+}
+
+func (o *FsIndexer) existsChunk(id string, chunkNum int) (ret bool, err error) {
+	chunkID := buildChunkID(id, chunkNum)
+
+	req := esapi.GetRequest{
+		Index:      o.ElasticsearchIndex,
+		DocumentID: chunkID,
+	}
+
+	var res *esapi.Response
+	if res, err = req.Do(o.Context, o.es); err != nil {
+		log.Warnf("error getting response, %s, %s", err, res)
+		return
+	}
+	defer res.Body.Close()
+
+	if res.IsError() {
+		ret = false
+		log.Warnf("[%s] error check exists document ID=%v", res.Status(), chunkID)
+	} else {
+		var existsBody map[string]interface{}
+		json.NewDecoder(res.Body).Decode(&existsBody)
+		if exists, ok := existsBody["found"]; ok {
+			ret = exists.(bool)
+		}
+	}
+	return
+}
+
+func buildChunkID(id string, chunkNum int) (ret string) {
+	if chunkNum > 0 {
+		ret = fmt.Sprintf("%v_%v", id, chunkNum)
+	} else {
+		ret = id
 	}
 	return
 }
