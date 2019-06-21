@@ -16,6 +16,7 @@ import (
 	"code.sajari.com/docconv"
 	elasticsearch "github.com/elastic/go-elasticsearch"
 	"github.com/elastic/go-elasticsearch/esapi"
+	"github.com/jaytaylor/html2text"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -36,6 +37,7 @@ type FsIndexer struct {
 	spaces     *regexp.Regexp
 	dotsSpaces *regexp.Regexp
 	dots       *regexp.Regexp
+	htmls      *regexp.Regexp
 
 	es *elasticsearch.Client
 	wg sync.WaitGroup
@@ -56,6 +58,7 @@ func NewFsIndexer(source string,
 	ret.spaces = regexp.MustCompile("\\s+")
 	ret.dotsSpaces = regexp.MustCompile("(\\. )+")
 	ret.dots = regexp.MustCompile("\\.+")
+	ret.htmls = regexp.MustCompile("htm.")
 
 	if includeFile != "" {
 		ret.includeFile = regexp.MustCompile(includeFile)
@@ -125,7 +128,6 @@ func (o *FsIndexer) Index(done func(label string), nop bool) (err error) {
 }
 
 func (o *FsIndexer) indexFile(path string, info os.FileInfo) (err error) {
-	var res *docconv.Response
 
 	h := md5.New()
 	io.WriteString(h, path)
@@ -142,9 +144,26 @@ func (o *FsIndexer) indexFile(path string, info os.FileInfo) (err error) {
 		return
 	}
 
-	if res, err = docconv.ConvertPath(path); err == nil {
-		content := strings.Trim(res.Body, " ")
+	fileExt := strings.TrimLeft(strings.ToLower(filepath.Ext(info.Name())), ".")
+	log.Infof("parse %v\n", info.Name())
+	var content string
+	if o.htmls.MatchString(fileExt) {
+		var file *os.File
+		if file, err = os.Open(path); err == nil {
+			content, err = html2text.FromReader(file)
+		}
+	} else {
+		var res *docconv.Response
+		if res, err = docconv.ConvertPath(path); err == nil {
+			content = res.Body
+		}
+	}
+
+	if err == nil {
+		content := strings.Trim(content, " ")
 		if len(content) == 0 {
+			log.Infof("%v, no content, %v\n", info.Name(), path)
+			o.indexChunk(id, 0, "", path, info, fileExt)
 			return
 		}
 
@@ -155,10 +174,10 @@ func (o *FsIndexer) indexFile(path string, info os.FileInfo) (err error) {
 		if o.ChunkSize > 1 {
 			chunks := chunkStringSpace(content, o.ChunkSize)
 			for i, chunk := range chunks {
-				o.indexChunk(id, i+1, chunk, res.Meta, path, info)
+				o.indexChunk(id, i+1, chunk, path, info, fileExt)
 			}
 		} else {
-			o.indexChunk(id, 0, content, res.Meta, path, info)
+			o.indexChunk(id, 0, content, path, info, fileExt)
 		}
 	} else {
 		log.Infof("can't parse file %v, %v\n", path, err)
@@ -167,7 +186,7 @@ func (o *FsIndexer) indexFile(path string, info os.FileInfo) (err error) {
 }
 
 func (o *FsIndexer) indexChunk(id string, chunkNum int, content string,
-	meta map[string]string, path string, info os.FileInfo) (err error) {
+	path string, info os.FileInfo, fileExt string) (err error) {
 	log.Infof("%v, %v chunk, size %v\n", info.Name(), chunkNum, len(content))
 	o.wg.Add(1)
 	defer o.wg.Done()
@@ -177,6 +196,8 @@ func (o *FsIndexer) indexChunk(id string, chunkNum int, content string,
 		Content: content,
 		Num:     chunkNum,
 		Path:    path,
+		Name:    info.Name(),
+		Type:    fileExt,
 	}
 
 	var docBytes []byte
@@ -288,4 +309,6 @@ type Doc struct {
 	Content string
 	Num     int
 	Path    string
+	Name    string
+	Type    string
 }
