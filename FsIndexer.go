@@ -139,7 +139,7 @@ func (o *FsIndexer) indexFile(path string, info os.FileInfo) (err error) {
 	} else {
 		existChunk, err = o.existsChunk(id, 0)
 	}
-	if err != nil || existChunk {
+	if existChunk {
 		log.Infof("%v exists already, skip\n", info.Name())
 		return
 	}
