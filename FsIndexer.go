@@ -89,12 +89,12 @@ func NewFsIndexer(source string,
 
 func (o *FsIndexer) Index(done func(label string), nop bool) (err error) {
 	err = filepath.Walk(o.Source, func(path string, info os.FileInfo, err error) error {
-		excludePath := o.excludePath == nil || !o.excludeDir.MatchString(path)
-		includePath := o.includePath == nil || o.includeDir.MatchString(path)
+		excludePath := o.excludePath == nil || !o.excludePath.MatchString(path)
+		includePath := o.includePath == nil || o.includePath.MatchString(path)
 		if info.IsDir() {
-			exclude := o.excludeDir == nil || !o.excludeDir.MatchString(info.Name())
-			include := o.includeDir == nil || o.includeDir.MatchString(info.Name())
-			if excludePath && includePath && exclude && include {
+			excludeDir := o.excludeDir == nil || !o.excludeDir.MatchString(info.Name())
+			includeDir := o.includeDir == nil || o.includeDir.MatchString(info.Name())
+			if excludePath && includePath && excludeDir && includeDir {
 				if nop {
 					log.Infof("nop: index folder %v\n", path)
 				} else {
@@ -111,7 +111,6 @@ func (o *FsIndexer) Index(done func(label string), nop bool) (err error) {
 				if nop {
 					log.Infof("nop: index %v\n", path)
 				} else {
-					log.Infof("index %v\n", path)
 					//go o.indexFile(path, info)
 					o.indexFile(path, info)
 				}
@@ -144,8 +143,6 @@ func (o *FsIndexer) indexFile(path string, info os.FileInfo) (err error) {
 	}
 
 	if res, err = docconv.ConvertPath(path); err == nil {
-		log.Infof("file content size %v\n", len(res.Body))
-
 		content := strings.Trim(res.Body, " ")
 		if len(content) == 0 {
 			return
@@ -227,7 +224,7 @@ func (o *FsIndexer) existsChunk(id string, chunkNum int) (ret bool, err error) {
 
 	if res.IsError() {
 		ret = false
-		log.Warnf("[%s] error check exists document ID=%v", res.Status(), chunkID)
+		//log.Warnf("[%s] error check exists document ID=%v", res.Status(), chunkID)
 	} else {
 		var existsBody map[string]interface{}
 		json.NewDecoder(res.Body).Decode(&existsBody)
