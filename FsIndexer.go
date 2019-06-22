@@ -151,17 +151,19 @@ func (o *FsIndexer) indexFile(path string, info os.FileInfo) (err error) {
 	var res *docconv.Response
 	if res, err = docconv.ConvertPath(path); err == nil {
 		content = res.Body
-	} else {
+		content = strings.Trim(content, " ")
+	}
+	if err != nil || content == "" {
 		if o.htmls.MatchString(fileExt) {
 			var bytes []byte
 			if bytes, err = ioutil.ReadFile(path); err == nil {
 				content = html2text.HTML2Text(string(bytes))
+				content = strings.Trim(content, " ")
 			}
 		}
 	}
 
 	if err == nil {
-		content := strings.Trim(content, " ")
 		if len(content) == 0 {
 			log.Infof("%v, no content, %v\n", info.Name(), path)
 			o.indexChunk(id, 0, "", path, info, fileExt)
