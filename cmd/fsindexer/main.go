@@ -37,7 +37,7 @@ func main() {
 		cli.StringFlag{
 			Name:  fmt.Sprintf("%v, %v", flagIncludeFile, "if"),
 			Usage: "include file regular expression",
-			Value: ".*\\.(doc|pdf|htm|html)$",
+			Value: ".*\\.(doc|docx|pdf|htm|html)$",
 		},
 		cli.StringFlag{
 			Name:  fmt.Sprintf("%v, %v", flagExcludeFile, "ef"),

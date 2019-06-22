@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,7 +17,7 @@ import (
 	"code.sajari.com/docconv"
 	elasticsearch "github.com/elastic/go-elasticsearch"
 	"github.com/elastic/go-elasticsearch/esapi"
-	"github.com/jaytaylor/html2text"
+	"github.com/k3a/html2text"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -58,7 +59,7 @@ func NewFsIndexer(source string,
 	ret.spaces = regexp.MustCompile("\\s+")
 	ret.dotsSpaces = regexp.MustCompile("(\\. )+")
 	ret.dots = regexp.MustCompile("\\.+")
-	ret.htmls = regexp.MustCompile("htm.")
+	ret.htmls = regexp.MustCompile("htm?")
 
 	if includeFile != "" {
 		ret.includeFile = regexp.MustCompile(includeFile)
@@ -147,15 +148,15 @@ func (o *FsIndexer) indexFile(path string, info os.FileInfo) (err error) {
 	fileExt := strings.TrimLeft(strings.ToLower(filepath.Ext(info.Name())), ".")
 	log.Infof("parse %v\n", info.Name())
 	var content string
-	if o.htmls.MatchString(fileExt) {
-		var file *os.File
-		if file, err = os.Open(path); err == nil {
-			content, err = html2text.FromReader(file)
-		}
+	var res *docconv.Response
+	if res, err = docconv.ConvertPath(path); err == nil {
+		content = res.Body
 	} else {
-		var res *docconv.Response
-		if res, err = docconv.ConvertPath(path); err == nil {
-			content = res.Body
+		if o.htmls.MatchString(fileExt) {
+			var bytes []byte
+			if bytes, err = ioutil.ReadFile(path); err == nil {
+				content = html2text.HTML2Text(string(bytes))
+			}
 		}
 	}
 
