@@ -157,8 +157,12 @@ func (o *FsIndexer) indexFile(path string, info os.FileInfo) (err error) {
 		if o.htmls.MatchString(fileExt) {
 			var bytes []byte
 			if bytes, err = ioutil.ReadFile(path); err == nil {
-				content = html2text.HTML2Text(string(bytes))
+				content = string(bytes)
 				content = strings.Trim(content, " ")
+				content2 := html2text.HTML2Text(content)
+				if content2 != "" {
+					content = content2
+				}
 			}
 		}
 	}
@@ -307,6 +311,25 @@ func chunkString(s string, chunkSize int) []string {
 	}
 	return chunks
 }
+
+/*
+func htmlToPdf() {
+	pdfg := wkhtmltopdf.NewPDFPreparer()
+	htmlfile, err := ioutil.ReadFile("./testfiles/htmlsimple.html")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	pdfg.AddPage(NewPageReader(bytes.NewReader(htmlfile)))
+	pdfg.Dpi.Set(600)
+
+	// The contents of htmlsimple.html are saved as base64 string in the JSON file
+	jb, err := pdfg.To .ToJSON()
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+*/
 
 type Doc struct {
 	Content string
