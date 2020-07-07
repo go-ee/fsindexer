@@ -24,7 +24,6 @@ import (
 type FsIndexer struct {
 	Source             string
 	ChunkSize          int
-	ElasticsearchURL   string
 	ElasticsearchIndex string
 	Context            context.Context
 
@@ -44,17 +43,11 @@ type FsIndexer struct {
 	wg sync.WaitGroup
 }
 
-func NewFsIndexer(source string,
-	includeFile string, excludeFile string,
-	includeDir string, excludeDir string,
-	includePath string, excludePath string,
-	elasticsearchURL string, elasticsearchIndex string,
+func NewFsIndexer(source, includeFile, excludeFile, includeDir, excludeDir, includePath, excludePath,
+	esURL, esUser, esPassword, esIndex string,
 	chunkSize int, context context.Context) (ret *FsIndexer, err error) {
 
-	ret = &FsIndexer{Source: source,
-		ElasticsearchURL: elasticsearchURL, ElasticsearchIndex: elasticsearchIndex,
-		ChunkSize: chunkSize,
-		Context:   context}
+	ret = &FsIndexer{Source: source, ElasticsearchIndex: esIndex, ChunkSize: chunkSize, Context: context}
 
 	ret.spaces = regexp.MustCompile("\\s+")
 	ret.dotsSpaces = regexp.MustCompile("(\\. )+")
@@ -80,9 +73,17 @@ func NewFsIndexer(source string,
 		ret.excludePath = regexp.MustCompile(excludePath)
 	}
 
-	ret.es, err = elasticsearch.NewDefaultClient()
+	esCfg := elasticsearch.Config{
+		Addresses: []string{
+			esURL,
+		},
+		Username: esUser,
+		Password: esPassword,
+	}
 
-	if res, errInd := ret.es.Indices.Create(elasticsearchIndex); errInd != nil {
+	ret.es, err = elasticsearch.NewClient(esCfg)
+
+	if res, errInd := ret.es.Indices.Create(esIndex); errInd != nil {
 		log.Infof("cannot create index: %s, %s", errInd, res)
 	} else {
 		log.Infof("index created: %s", res)
@@ -93,6 +94,11 @@ func NewFsIndexer(source string,
 
 func (o *FsIndexer) Index(done func(label string), nop bool) (err error) {
 	err = filepath.Walk(o.Source, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			log.Warnf("%v: %v\n", path, err)
+			return nil
+		}
+
 		excludePath := o.excludePath == nil || !o.excludePath.MatchString(path)
 		includePath := o.includePath == nil || o.includePath.MatchString(path)
 		if info.IsDir() {
@@ -129,9 +135,15 @@ func (o *FsIndexer) Index(done func(label string), nop bool) (err error) {
 }
 
 func (o *FsIndexer) indexFile(path string, info os.FileInfo) (err error) {
+	defer func() {
+		rc := recover()
+		if rc != nil {
+			log.Warnf("%v:%v => \n", path, info, rc)
+		}
+	}()
 
 	h := md5.New()
-	io.WriteString(h, path)
+	_, err = io.WriteString(h, path)
 	id := fmt.Sprintf("%x", h.Sum(nil))
 
 	var existChunk bool
@@ -155,9 +167,9 @@ func (o *FsIndexer) indexFile(path string, info os.FileInfo) (err error) {
 	}
 	if err != nil || content == "" {
 		if o.htmls.MatchString(fileExt) {
-			var bytes []byte
-			if bytes, err = ioutil.ReadFile(path); err == nil {
-				content = string(bytes)
+			var bs []byte
+			if bs, err = ioutil.ReadFile(path); err == nil {
+				content = string(bs)
 				content = strings.Trim(content, " ")
 				content2 := html2text.HTML2Text(content)
 				if content2 != "" {
@@ -170,7 +182,7 @@ func (o *FsIndexer) indexFile(path string, info os.FileInfo) (err error) {
 	if err == nil {
 		if len(content) == 0 {
 			log.Infof("%v, no content, %v\n", info.Name(), path)
-			o.indexChunk(id, 0, "", path, info, fileExt)
+			err = o.indexChunk(id, 0, "", path, info, fileExt)
 			return
 		}
 
@@ -181,10 +193,10 @@ func (o *FsIndexer) indexFile(path string, info os.FileInfo) (err error) {
 		if o.ChunkSize > 1 {
 			chunks := chunkStringSpace(content, o.ChunkSize)
 			for i, chunk := range chunks {
-				o.indexChunk(id, i+1, chunk, path, info, fileExt)
+				err = o.indexChunk(id, i+1, chunk, path, info, fileExt)
 			}
 		} else {
-			o.indexChunk(id, 0, content, path, info, fileExt)
+			err = o.indexChunk(id, 0, content, path, info, fileExt)
 		}
 	} else {
 		log.Infof("can't parse file %v, %v\n", path, err)

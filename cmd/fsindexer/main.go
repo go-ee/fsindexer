@@ -2,88 +2,116 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 
 	"github.com/go-ee/fsindexer"
+	"github.com/go-ee/utils/lg"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 )
 
-const flagSource = "source"
-const flagIncludeFile = "includeFileRegExp"
-const flagExcludeFile = "excludeFileRegExp"
-const flagIncludeDir = "includeDirRegExp"
-const flagExcludeDir = "excludeDirRegExp"
-const flagIncludePath = "includePathRegExp"
-const flagExcludePath = "excludePathRegExp"
-const flagElasticsearchURL = "elasticsearchURL"
-const flagElasticsearchIndex = "elasticsearchIndex"
-const flagChunkSize = "chunkSize"
-
-const flagNoOperation = "noOperation"
+var source, includeFile, excludeFile, includeDir, excludeDir, includePath, excludePath string
+var esURL, esUser, esPassword, elasticsearchIndex string
+var noOperation bool
+var chunkSize int
 
 func main() {
+
+	lg.LogrusTimeAsTimestampFormatter()
 
 	name := "File System Indexer"
 	runner := cli.NewApp()
 	runner.Usage = name
 	runner.Version = "1.0"
 	runner.Flags = []cli.Flag{
-		cli.StringFlag{
-			Name:  fmt.Sprintf("%v, %v", flagSource, "s"),
-			Usage: "folder or file to index recursively",
+		&cli.StringFlag{
+			Name:        "source",
+			Aliases:     []string{"s"},
+			Usage:       "folder or file to index recursively",
+			Destination: &source,
 		},
-		cli.StringFlag{
-			Name:  fmt.Sprintf("%v, %v", flagIncludeFile, "if"),
-			Usage: "include file regular expression",
-			Value: ".*\\.(doc|docx|pdf|htm|html)$",
+		&cli.StringFlag{
+			Name:        "includeFile",
+			Aliases:     []string{"if"},
+			Usage:       "include file regular expression",
+			Value:       ".*\\.(doc|docx|pdf|htm|html)$",
+			Destination: &includeFile,
 		},
-		cli.StringFlag{
-			Name:  fmt.Sprintf("%v, %v", flagExcludeFile, "ef"),
-			Usage: "exclude file regular expression",
+		&cli.StringFlag{
+			Name:        "excludeFile",
+			Aliases:     []string{"ef"},
+			Usage:       "exclude file regular expression",
+			Destination: &excludeFile,
 		},
-		cli.StringFlag{
-			Name:  fmt.Sprintf("%v, %v", flagIncludeDir, "id"),
-			Usage: "include dir regular expression",
+		&cli.StringFlag{
+			Name:        "includeDir",
+			Aliases:     []string{"id"},
+			Usage:       "include dir regular expression",
+			Destination: &includeDir,
 		},
-		cli.StringFlag{
-			Name:  fmt.Sprintf("%v, %v", flagExcludeDir, "ed"),
-			Usage: "exclude dir regular expression",
+		&cli.StringFlag{
+			Name:        "excludeDir",
+			Aliases:     []string{"ed"},
+			Usage:       "exclude dir regular expression",
+			Value:       "^(\\.|~|sdk)",
+			Destination: &excludeDir,
 		},
-		cli.StringFlag{
-			Name:  fmt.Sprintf("%v, %v", flagIncludePath, "ip"),
-			Usage: "include path regular expression",
+		&cli.StringFlag{
+			Name:        "includePath",
+			Aliases:     []string{"ip"},
+			Usage:       "include path regular expression",
+			Destination: &includePath,
 		},
-		cli.StringFlag{
-			Name:  fmt.Sprintf("%v, %v", flagExcludePath, "ep"),
-			Usage: "exclude path regular expression",
+		&cli.StringFlag{
+			Name:        "excludePath",
+			Aliases:     []string{"ep"},
+			Usage:       "exclude path regular expression",
+			Destination: &excludePath,
 		},
-		cli.StringFlag{
-			Name:  fmt.Sprintf("%v, %v", flagElasticsearchURL, "esURL"),
-			Usage: "Elasticsearch URL",
-			Value: "http://localhost:9200",
+		&cli.StringFlag{
+			Name:        "elasticsearchURL",
+			Aliases:     []string{"esURL"},
+			Usage:       "Elasticsearch URL",
+			Value:       "http://localhost:9200",
+			Destination: &esURL,
+		}, &cli.StringFlag{
+			Name:        "elasticsearchUser",
+			Aliases:     []string{"esUser"},
+			Usage:       "Elasticsearch User",
+			Value:       "elastic",
+			Destination: &esUser,
+		}, &cli.StringFlag{
+			Name:        "elasticsearchPassword",
+			Aliases:     []string{"esPassword"},
+			Usage:       "Elasticsearch Password",
+			Value:       "changeme",
+			Destination: &esPassword,
 		},
-		cli.StringFlag{
-			Name:  fmt.Sprintf("%v, %v", flagElasticsearchIndex, "esI"),
-			Usage: "Index name of the Elasticsearch",
-			Value: "fs",
+		&cli.StringFlag{
+			Name:        "elasticsearchIndex",
+			Aliases:     []string{"esI"},
+			Usage:       "Index name of the Elasticsearch",
+			Value:       "fs",
+			Destination: &elasticsearchIndex,
 		},
-		cli.IntFlag{
-			Name:  fmt.Sprintf("%v, %v", flagChunkSize, "c"),
-			Usage: "Chunk size for a indexed document",
-			Value: 3000,
+		&cli.IntFlag{
+			Name:        "chunkSize",
+			Aliases:     []string{"c"},
+			Usage:       "Chunk size for a indexed document",
+			Value:       3000,
+			Destination: &chunkSize,
 		},
 	}
 
-	runner.Commands = []cli.Command{
+	runner.Commands = []*cli.Command{
 		{
 			Name:  "index",
 			Usage: "Start indexing",
 			Flags: []cli.Flag{
-				cli.BoolFlag{
-					Name:  fmt.Sprintf("%v, %v", flagNoOperation, "nop"),
-					Usage: "Only traversing without indexing",
+				&cli.BoolFlag{
+					Name:        "noOperation, nop",
+					Usage:       "Only traversing without indexing",
+					Destination: &noOperation,
 				},
 			},
 			Action: func(c *cli.Context) (err error) {
@@ -98,7 +126,7 @@ func main() {
 					l(c).Infof("%v completed", label)
 				}
 
-				err = indexer.Index(done, c.Bool(flagNoOperation))
+				err = indexer.Index(done, noOperation)
 
 				return
 			},
@@ -113,29 +141,31 @@ func main() {
 
 func l(c *cli.Context) *log.Entry {
 	return log.WithFields(log.Fields{
-		flagSource:             c.GlobalString(flagSource),
-		flagIncludeFile:        c.GlobalString(flagIncludeFile),
-		flagExcludeFile:        c.GlobalString(flagExcludeFile),
-		flagIncludeDir:         c.GlobalString(flagIncludeDir),
-		flagExcludeDir:         c.GlobalString(flagExcludeDir),
-		flagIncludePath:        c.GlobalString(flagIncludePath),
-		flagExcludePath:        c.GlobalString(flagExcludePath),
-		flagElasticsearchURL:   c.GlobalString(flagElasticsearchURL),
-		flagElasticsearchIndex: c.GlobalString(flagElasticsearchIndex),
+		"source":      source,
+		"includeFile": includeFile,
+		"excludeFile": excludeFile,
+		"includeDir":  includeDir,
+		"excludeDir":  excludeDir,
+		"includePath": includePath,
+		"excludePath": excludePath,
+		"esURL":       esURL,
+		"esIndex":     elasticsearchIndex,
 	})
 }
 
 func buildIndexer(c *cli.Context) (ret *fsindexer.FsIndexer, err error) {
 	return fsindexer.NewFsIndexer(
-		c.GlobalString(flagSource),
-		c.GlobalString(flagIncludeFile),
-		c.GlobalString(flagExcludeFile),
-		c.GlobalString(flagIncludeDir),
-		c.GlobalString(flagExcludeDir),
-		c.GlobalString(flagIncludePath),
-		c.GlobalString(flagExcludePath),
-		c.GlobalString(flagElasticsearchURL),
-		c.GlobalString(flagElasticsearchIndex),
-		c.GlobalInt(flagChunkSize),
+		source,
+		includeFile,
+		excludeFile,
+		includeDir,
+		excludeDir,
+		includePath,
+		excludePath,
+		esURL,
+		esUser,
+		esPassword,
+		elasticsearchIndex,
+		chunkSize,
 		context.Background())
 }
