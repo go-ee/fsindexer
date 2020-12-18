@@ -7,7 +7,7 @@ import (
 	"github.com/go-ee/fsindexer"
 	"github.com/go-ee/utils/lg"
 	log "github.com/sirupsen/logrus"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v2"
 )
 
 var source, includeFile, excludeFile, includeDir, excludeDir, includePath, excludePath string

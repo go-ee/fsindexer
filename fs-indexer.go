@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -13,10 +14,11 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"code.sajari.com/docconv"
-	elasticsearch "github.com/elastic/go-elasticsearch"
 	"github.com/elastic/go-elasticsearch/esapi"
+	elasticsearch "github.com/elastic/go-elasticsearch/v7"
 	"github.com/k3a/html2text"
 	log "github.com/sirupsen/logrus"
 )
@@ -39,15 +41,18 @@ type FsIndexer struct {
 	dots       *regexp.Regexp
 	htmls      *regexp.Regexp
 
-	es *elasticsearch.Client
-	wg sync.WaitGroup
+	sleepDurationAtTooManyRequests time.Duration
+	es                             *elasticsearch.Client
+	wg                             sync.WaitGroup
 }
 
 func NewFsIndexer(source, includeFile, excludeFile, includeDir, excludeDir, includePath, excludePath,
 	esURL, esUser, esPassword, esIndex string,
 	chunkSize int, context context.Context) (ret *FsIndexer, err error) {
 
-	ret = &FsIndexer{Source: source, ElasticsearchIndex: esIndex, ChunkSize: chunkSize, Context: context}
+	ret = &FsIndexer{Source: source, ElasticsearchIndex: esIndex, ChunkSize: chunkSize, Context: context,
+		sleepDurationAtTooManyRequests: time.Second,
+	}
 
 	ret.spaces = regexp.MustCompile("\\s+")
 	ret.dotsSpaces = regexp.MustCompile("(\\. )+")
@@ -138,7 +143,7 @@ func (o *FsIndexer) indexFile(path string, info os.FileInfo) (err error) {
 	defer func() {
 		rc := recover()
 		if rc != nil {
-			log.Warnf("%v:%v => \n", path, info, rc)
+			log.Warnf("%v:%v => %v\n", path, info, rc)
 		}
 	}()
 
@@ -182,7 +187,7 @@ func (o *FsIndexer) indexFile(path string, info os.FileInfo) (err error) {
 	if err == nil {
 		if len(content) == 0 {
 			log.Infof("%v, no content, %v\n", info.Name(), path)
-			err = o.indexChunk(id, 0, "", path, info, fileExt)
+			err = o.indexChunkAndWaitAndRepeatIfTooManyRequests(id, 0, "", path, info, fileExt)
 			return
 		}
 
@@ -193,10 +198,10 @@ func (o *FsIndexer) indexFile(path string, info os.FileInfo) (err error) {
 		if o.ChunkSize > 1 {
 			chunks := chunkStringSpace(content, o.ChunkSize)
 			for i, chunk := range chunks {
-				err = o.indexChunk(id, i+1, chunk, path, info, fileExt)
+				err = o.indexChunkAndWaitAndRepeatIfTooManyRequests(id, i+1, chunk, path, info, fileExt)
 			}
 		} else {
-			err = o.indexChunk(id, 0, content, path, info, fileExt)
+			err = o.indexChunkAndWaitAndRepeatIfTooManyRequests(id, 0, content, path, info, fileExt)
 		}
 	} else {
 		log.Infof("can't parse file %v, %v\n", path, err)
@@ -204,8 +209,33 @@ func (o *FsIndexer) indexFile(path string, info os.FileInfo) (err error) {
 	return
 }
 
-func (o *FsIndexer) indexChunk(id string, chunkNum int, content string,
-	path string, info os.FileInfo, fileExt string) (err error) {
+func (o *FsIndexer) indexChunkAndWaitAndRepeatIfTooManyRequests(
+	id string, chunkNum int, content string, path string, info os.FileInfo, fileExt string) (err error) {
+	if err = o.indexChunk(id, chunkNum, content, path, info, fileExt); err != nil {
+		if isTooManyRequests(err) {
+			// sleep for the first time
+			log.Warnf("sleep %v, because of %v", o.sleepDurationAtTooManyRequests, err)
+			time.Sleep(o.sleepDurationAtTooManyRequests)
+			if err = o.indexChunk(id, chunkNum, content, path, info, fileExt); err != nil {
+				if isTooManyRequests(err) {
+					// increase sleep duration and start recursive
+					o.sleepDurationAtTooManyRequests = o.sleepDurationAtTooManyRequests * 2
+					log.Warnf("increase sleep duration to %v", o.sleepDurationAtTooManyRequests)
+					err = o.indexChunkAndWaitAndRepeatIfTooManyRequests(id, chunkNum, content, path, info, fileExt)
+				}
+			}
+		}
+	}
+	return
+}
+
+func isTooManyRequests(err error) bool {
+	return strings.Contains(err.Error(), "Too Many Requests")
+}
+
+func (o *FsIndexer) indexChunk(
+	id string, chunkNum int, content string, path string, info os.FileInfo, fileExt string) (err error) {
+
 	log.Infof("%v, %v chunk, size %v\n", info.Name(), chunkNum, len(content))
 	o.wg.Add(1)
 	defer o.wg.Done()
@@ -231,7 +261,8 @@ func (o *FsIndexer) indexChunk(id string, chunkNum int, content string,
 		Index:      o.ElasticsearchIndex,
 		DocumentID: chunkID,
 		Body:       bytes.NewReader(docBytes),
-		Refresh:    "true",
+		// Refresh:    "true",
+		WaitForActiveShards: "1",
 	}
 
 	var res *esapi.Response
@@ -242,7 +273,7 @@ func (o *FsIndexer) indexChunk(id string, chunkNum int, content string,
 	defer res.Body.Close()
 
 	if res.IsError() {
-		log.Warnf("[%s] error indexing document ID=%v", res.Status(), chunkID)
+		err = errors.New(fmt.Sprintf("[%s] error indexing document ID=%v", res.Status(), chunkID))
 	}
 	return
 }
