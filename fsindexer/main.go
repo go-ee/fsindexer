@@ -2,108 +2,125 @@ package main
 
 import (
 	"context"
-	"os"
-
 	"github.com/go-ee/fsindexer"
 	"github.com/go-ee/utils/lg"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
+	"os"
 )
 
-var source, includeFile, excludeFile, includeDir, excludeDir, includePath, excludePath string
-var esURL, esUser, esPassword, elasticsearchIndex string
-var noOperation bool
-var chunkSize int
-
 func main() {
+	c := NewCli()
+
+	if err := c.Run(os.Args); err != nil {
+		log.Infof("run failed, %v, %v", os.Args, err)
+	}
+	log.Infof("done %v", os.Args)
+}
+
+type Cli struct {
+	*cli.App
+	source, includeFile, excludeFile, includeDir, excludeDir, includePath, excludePath string
+	esURL, esUser, esPassword, elasticsearchIndex                                      string
+	noOperation                                                                        bool
+	chunkSize                                                                          int
+}
+
+func NewCli() (ret *Cli) {
+	ret = &Cli{}
+	ret.init()
+	return
+}
+
+func (o *Cli) init() {
 
 	lg.LogrusTimeAsTimestampFormatter()
 
 	name := "File System Indexer"
-	runner := cli.NewApp()
-	runner.Usage = name
-	runner.Version = "1.0"
-	runner.Flags = []cli.Flag{
+	o.App = cli.NewApp()
+	o.Usage = name
+	o.Version = "1.0"
+	o.Flags = []cli.Flag{
 		&cli.StringFlag{
 			Name:        "source",
 			Aliases:     []string{"s"},
 			Usage:       "folder or file to index recursively",
-			Destination: &source,
+			Destination: &o.source,
 		},
 		&cli.StringFlag{
 			Name:        "includeFile",
 			Aliases:     []string{"if"},
 			Usage:       "include file regular expression",
 			Value:       ".*\\.(doc|docx|pdf|htm|html)$",
-			Destination: &includeFile,
+			Destination: &o.includeFile,
 		},
 		&cli.StringFlag{
 			Name:        "excludeFile",
 			Aliases:     []string{"ef"},
 			Usage:       "exclude file regular expression",
-			Destination: &excludeFile,
+			Destination: &o.excludeFile,
 		},
 		&cli.StringFlag{
 			Name:        "includeDir",
 			Aliases:     []string{"id"},
 			Usage:       "include dir regular expression",
-			Destination: &includeDir,
+			Destination: &o.includeDir,
 		},
 		&cli.StringFlag{
 			Name:        "excludeDir",
 			Aliases:     []string{"ed"},
 			Usage:       "exclude dir regular expression",
 			Value:       "^(\\.|~|sdk)",
-			Destination: &excludeDir,
+			Destination: &o.excludeDir,
 		},
 		&cli.StringFlag{
 			Name:        "includePath",
 			Aliases:     []string{"ip"},
 			Usage:       "include path regular expression",
-			Destination: &includePath,
+			Destination: &o.includePath,
 		},
 		&cli.StringFlag{
 			Name:        "excludePath",
 			Aliases:     []string{"ep"},
 			Usage:       "exclude path regular expression",
-			Destination: &excludePath,
+			Destination: &o.excludePath,
 		},
 		&cli.StringFlag{
 			Name:        "elasticsearchURL",
 			Aliases:     []string{"esURL"},
 			Usage:       "Elasticsearch URL",
 			Value:       "http://localhost:9200",
-			Destination: &esURL,
+			Destination: &o.esURL,
 		}, &cli.StringFlag{
 			Name:        "elasticsearchUser",
 			Aliases:     []string{"esUser"},
 			Usage:       "Elasticsearch User",
 			Value:       "elastic",
-			Destination: &esUser,
+			Destination: &o.esUser,
 		}, &cli.StringFlag{
 			Name:        "elasticsearchPassword",
 			Aliases:     []string{"esPassword"},
 			Usage:       "Elasticsearch Password",
 			Value:       "changeme",
-			Destination: &esPassword,
+			Destination: &o.esPassword,
 		},
 		&cli.StringFlag{
 			Name:        "elasticsearchIndex",
 			Aliases:     []string{"esI"},
 			Usage:       "Index name of the Elasticsearch",
 			Value:       "fs",
-			Destination: &elasticsearchIndex,
+			Destination: &o.elasticsearchIndex,
 		},
 		&cli.IntFlag{
 			Name:        "chunkSize",
 			Aliases:     []string{"c"},
 			Usage:       "Chunk size for a indexed document",
 			Value:       3000,
-			Destination: &chunkSize,
+			Destination: &o.chunkSize,
 		},
 	}
 
-	runner.Commands = []*cli.Command{
+	o.Commands = []*cli.Command{
 		{
 			Name:  "index",
 			Usage: "Start indexing",
@@ -111,61 +128,56 @@ func main() {
 				&cli.BoolFlag{
 					Name:        "noOperation, nop",
 					Usage:       "Only traversing without indexing",
-					Destination: &noOperation,
+					Destination: &o.noOperation,
 				},
 			},
 			Action: func(c *cli.Context) (err error) {
-				l(c).Info("index")
+				o.l().Info("index")
 
 				var indexer *fsindexer.FsIndexer
-				if indexer, err = buildIndexer(c); err != nil {
+				if indexer, err = o.buildIndexer(); err != nil {
 					return
 				}
 
 				done := func(label string) {
-					l(c).Infof("%v completed", label)
+					o.l().Infof("%v completed", label)
 				}
 
-				err = indexer.Index(done, noOperation)
+				err = indexer.Index(done, o.noOperation)
 
 				return
 			},
 		},
 	}
-
-	if err := runner.Run(os.Args); err != nil {
-		log.Infof("run failed, %v, %v", os.Args, err)
-	}
-	log.Infof("done %v", os.Args)
 }
 
-func l(c *cli.Context) *log.Entry {
+func (o *Cli) l() *log.Entry {
 	return log.WithFields(log.Fields{
-		"source":      source,
-		"includeFile": includeFile,
-		"excludeFile": excludeFile,
-		"includeDir":  includeDir,
-		"excludeDir":  excludeDir,
-		"includePath": includePath,
-		"excludePath": excludePath,
-		"esURL":       esURL,
-		"esIndex":     elasticsearchIndex,
+		"source":      o.source,
+		"includeFile": o.includeFile,
+		"excludeFile": o.excludeFile,
+		"includeDir":  o.includeDir,
+		"excludeDir":  o.excludeDir,
+		"includePath": o.includePath,
+		"excludePath": o.excludePath,
+		"esURL":       o.esURL,
+		"esIndex":     o.elasticsearchIndex,
 	})
 }
 
-func buildIndexer(c *cli.Context) (ret *fsindexer.FsIndexer, err error) {
+func (o *Cli) buildIndexer() (ret *fsindexer.FsIndexer, err error) {
 	return fsindexer.NewFsIndexer(
-		source,
-		includeFile,
-		excludeFile,
-		includeDir,
-		excludeDir,
-		includePath,
-		excludePath,
-		esURL,
-		esUser,
-		esPassword,
-		elasticsearchIndex,
-		chunkSize,
+		o.source,
+		o.includeFile,
+		o.excludeFile,
+		o.includeDir,
+		o.excludeDir,
+		o.includePath,
+		o.excludePath,
+		o.esURL,
+		o.esUser,
+		o.esPassword,
+		o.elasticsearchIndex,
+		o.chunkSize,
 		context.Background())
 }
