@@ -1,4 +1,4 @@
-package fsindexer
+package fsind
 
 import (
 	"bytes"
@@ -136,6 +136,7 @@ func (o *FsIndexer) Index(done func(label string), nop bool) (err error) {
 		return nil
 	})
 	o.wg.Wait()
+	done("indexed")
 	return
 }
 
